@@ -37,42 +37,54 @@ jobs:
       - name: Install Android API 36
         run: sdkmanager "platforms;android-36"
 
-      - name: Force Compile SDK 36
+      - name: Get packages
+        run: flutter pub get
+
+      - name: Fix Compile SDK for all plugins
         run: |
           python3 - <<'PY'
+          import os
           import re
           from pathlib import Path
 
-          files = [
-              Path("android/app/build.gradle.kts"),
-              Path("android/app/build.gradle")
+          roots = [
+              Path("android"),
+              Path(os.environ.get("PUB_CACHE", str(Path.home() / ".pub-cache")))
           ]
 
-          for file in files:
-              if file.exists():
-                  content = file.read_text()
-                  content, count1 = re.subn(
-                      r'compileSdk\s*=\s*[^\n]+',
-                      'compileSdk = 36',
-                      content
-                  )
-                  content, count2 = re.subn(
-                      r'compileSdkVersion\s+[^\n]+',
-                      'compileSdkVersion 36',
-                      content
-                  )
-                  file.write_text(content)
-                  print(f"Updated: {file}")
-                  print(f"Changes: {count1 + count2}")
-                  print(content)
+          patterns = [
+              re.compile(r'(?m)^(\s*compileSdkVersion\s+)[^\s]+'),
+              re.compile(r'(?m)^(\s*compileSdk\s*=\s*)[^\s]+'),
+              re.compile(r'(?m)^(\s*compileSdk\s+)[^\s]+')
+          ]
+
+          changed = 0
+
+          for root in roots:
+              if not root.exists():
+                  continue
+
+              for file in root.rglob("build.gradle*"):
+                  try:
+                      content = file.read_text()
+                      updated = content
+
+                      for pattern in patterns:
+                          updated = pattern.sub(r'\g<1>36', updated)
+
+                      if updated != content:
+                          file.write_text(updated)
+                          print("Updated:", file)
+                          changed += 1
+                  except (OSError, UnicodeDecodeError):
+                      pass
+
+          print("Gradle files updated:", changed)
           PY
 
-      - name: Verify Android SDK
+      - name: Verify Compile SDK
         run: |
-          grep -n "compileSdk" android/app/build.gradle* 
-
-      - name: Get packages
-        run: flutter pub get
+          grep -nE 'compileSdk(Version)?' android/app/build.gradle*
 
       - name: Build APK
         run: flutter build apk --release
