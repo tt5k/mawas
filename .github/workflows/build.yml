@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Download project
+      - name: Checkout
         uses: actions/checkout@v5
 
       - name: Setup Java
@@ -37,54 +37,50 @@ jobs:
       - name: Install Android API 36
         run: sdkmanager "platforms;android-36"
 
-      - name: Get packages
-        run: flutter pub get
-
-      - name: Fix Compile SDK for all plugins
+      - name: Configure Compile SDK
+        shell: bash
         run: |
           python3 - <<'PY'
-          import os
           import re
           from pathlib import Path
 
-          roots = [
-              Path("android"),
-              Path(os.environ.get("PUB_CACHE", str(Path.home() / ".pub-cache")))
-          ]
+          kts = Path("android/app/build.gradle.kts")
+          groovy = Path("android/app/build.gradle")
 
-          patterns = [
-              re.compile(r'(?m)^(\s*compileSdkVersion\s+)[^\s]+'),
-              re.compile(r'(?m)^(\s*compileSdk\s*=\s*)[^\s]+'),
-              re.compile(r'(?m)^(\s*compileSdk\s+)[^\s]+')
-          ]
+          if kts.exists():
+              path = kts
+              pattern = r'^(\s*)compileSdk\s*=.*$'
+              replacement = r'\1compileSdk = 36'
+          elif groovy.exists():
+              path = groovy
+              pattern = r'^(\s*)compileSdkVersion\s+.*$'
+              replacement = r'\1compileSdkVersion 36'
+          else:
+              raise SystemExit("Android app Gradle file not found")
 
-          changed = 0
+          lines = path.read_text().splitlines()
+          found = False
 
-          for root in roots:
-              if not root.exists():
-                  continue
+          for i, line in enumerate(lines):
+              if re.match(pattern, line):
+                  lines[i] = re.sub(pattern, replacement, line)
+                  found = True
+                  break
 
-              for file in root.rglob("build.gradle*"):
-                  try:
-                      content = file.read_text()
-                      updated = content
+          if not found:
+              raise SystemExit("Could not find compileSdk setting")
 
-                      for pattern in patterns:
-                          updated = pattern.sub(r'\g<1>36', updated)
-
-                      if updated != content:
-                          file.write_text(updated)
-                          print("Updated:", file)
-                          changed += 1
-                  except (OSError, UnicodeDecodeError):
-                      pass
-
-          print("Gradle files updated:", changed)
+          path.write_text("\n".join(lines) + "\n")
+          print("Corrected:", path)
+          print(lines[i])
           PY
 
       - name: Verify Compile SDK
         run: |
           grep -nE 'compileSdk(Version)?' android/app/build.gradle*
+
+      - name: Get packages
+        run: flutter pub get
 
       - name: Build APK
         run: flutter build apk --release
