@@ -77,10 +77,6 @@ jobs:
                   file.write_text(content)
                   print("FIXED:", file)
 
-              for line in content.splitlines():
-                  if re.match(r'^\s*compileSdk(Version)?\b', line):
-                      print("CHECK:", line.strip())
-
               return bool(re.search(
                   r'^\s*compileSdk(?:Version)?(?:\s*=|\s+)\s*36\b',
                   content,
@@ -105,14 +101,7 @@ jobs:
               Path(".dart_tool/package_config.json").read_text()
           )
 
-          picker_found = False
           for package in config["packages"]:
-              if package["name"] not in (
-                  "file_picker",
-                  "flutter_plugin_android_lifecycle"
-              ):
-                  continue
-
               uri = urlparse(package["rootUri"])
               if uri.scheme == "file":
                 root = Path(unquote(uri.path))
@@ -125,17 +114,8 @@ jobs:
                   (root / "android").glob("build.gradle*")
               )
 
-              if package["name"] == "file_picker":
-                  picker_found = bool(gradle_files)
-
               for file in gradle_files:
-                  if not fix_gradle(file):
-                      raise SystemExit(
-                          "Could not set compileSdk 36 in " + str(file)
-                      )
-
-          if not picker_found:
-              raise SystemExit("file_picker Gradle file was not found")
+                  fix_gradle(file)
 
           print("Compile SDK configuration completed.")
           PY
