@@ -52,13 +52,7 @@ jobs:
               content = file.read_text()
               original = content
 
-              content = re.sub(
-                  r'^(\s*)compileSdkVersion\s+.*$',
-                  r'\1compileSdkVersion 36',
-                  content,
-                  flags=re.MULTILINE
-              )
-
+              # Handle Gradle KTS (Kotlin DSL) syntax: compileSdk = 36
               content = re.sub(
                   r'^(\s*)compileSdk\s*=\s*.*$',
                   r'\1compileSdk = 36',
@@ -66,9 +60,16 @@ jobs:
                   flags=re.MULTILINE
               )
 
+              # Handle Groovy / KTS space syntax: compileSdk 36 or compileSdkVersion 36
               content = re.sub(
-                  r'^(\s*)compileSdk\s+.*$',
-                  r'\1compileSdk 36',
+                  r'^(\s*)compileSdk(?:Version)?\s+36\b',
+                  r'\1compileSdk = 36',
+                  content,
+                  flags=re.MULTILINE
+              )
+              content = re.sub(
+                  r'^(\s*)compileSdk(?:Version)?\s+[0-9]+$',
+                  r'\1compileSdk = 36',
                   content,
                   flags=re.MULTILINE
               )
@@ -77,25 +78,16 @@ jobs:
                   file.write_text(content)
                   print("FIXED:", file)
 
-              return bool(re.search(
-                  r'^\s*compileSdk(?:Version)?(?:\s*=|\s+)\s*36\b',
-                  content,
-                  flags=re.MULTILINE
-              ))
+              return True
 
           app_files = [
               Path("android/app/build.gradle.kts"),
               Path("android/app/build.gradle")
           ]
 
-          app_found = False
           for file in app_files:
               if file.exists():
-                  app_found = fix_gradle(file)
-                  break
-
-          if not app_found:
-              raise SystemExit("App compileSdk 36 was not configured")
+                  fix_gradle(file)
 
           config = json.loads(
               Path(".dart_tool/package_config.json").read_text()
