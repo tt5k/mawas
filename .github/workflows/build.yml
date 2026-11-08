@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
+      - name: Checkout project
         uses: actions/checkout@v5
 
       - name: Setup Java
@@ -37,52 +37,111 @@ jobs:
       - name: Install Android API 36
         run: sdkmanager "platforms;android-36"
 
-      - name: Configure Compile SDK
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Fix Compile SDK in app and plugins
         shell: bash
         run: |
           python3 - <<'PY'
+          import json
           import re
           from pathlib import Path
+          from urllib.parse import urlparse, unquote
 
-          kts = Path("android/app/build.gradle.kts")
-          groovy = Path("android/app/build.gradle")
+          def fix_gradle(file):
+              content = file.read_text()
+              original = content
 
-          if kts.exists():
-              path = kts
-              pattern = r'^(\s*)compileSdk\s*=.*$'
-              replacement = r'\1compileSdk = 36'
-          elif groovy.exists():
-              path = groovy
-              pattern = r'^(\s*)compileSdkVersion\s+.*$'
-              replacement = r'\1compileSdkVersion 36'
-          else:
-              raise SystemExit("Android app Gradle file not found")
+              content = re.sub(
+                  r'^(\s*)compileSdkVersion\s+.*$',
+                  r'\1compileSdkVersion 36',
+                  content,
+                  flags=re.MULTILINE
+              )
 
-          lines = path.read_text().splitlines()
-          found = False
+              content = re.sub(
+                  r'^(\s*)compileSdk\s*=\s*.*$',
+                  r'\1compileSdk = 36',
+                  content,
+                  flags=re.MULTILINE
+              )
 
-          for i, line in enumerate(lines):
-              if re.match(pattern, line):
-                  lines[i] = re.sub(pattern, replacement, line)
-                  found = True
+              content = re.sub(
+                  r'^(\s*)compileSdk\s+.*$',
+                  r'\1compileSdk 36',
+                  content,
+                  flags=re.MULTILINE
+              )
+
+              if content != original:
+                  file.write_text(content)
+                  print("FIXED:", file)
+
+              for line in content.splitlines():
+                  if re.match(r'^\s*compileSdk(Version)?\b', line):
+                      print("CHECK:", line.strip())
+
+              return bool(re.search(
+                  r'^\s*compileSdk(?:Version)?(?:\s*=|\s+)\s*36\b',
+                  content,
+                  flags=re.MULTILINE
+              ))
+
+          app_files = [
+              Path("android/app/build.gradle.kts"),
+              Path("android/app/build.gradle")
+          ]
+
+          app_found = False
+          for file in app_files:
+              if file.exists():
+                  app_found = fix_gradle(file)
                   break
 
-          if not found:
-              raise SystemExit("Could not find compileSdk setting")
+          if not app_found:
+              raise SystemExit("App compileSdk 36 was not configured")
 
-          path.write_text("\n".join(lines) + "\n")
-          print("Corrected:", path)
-          print(lines[i])
+          config = json.loads(
+              Path(".dart_tool/package_config.json").read_text()
+          )
+
+          picker_found = False
+          for package in config["packages"]:
+              if package["name"] not in (
+                  "file_picker",
+                  "flutter_plugin_android_lifecycle"
+              ):
+                  continue
+
+              uri = urlparse(package["rootUri"])
+              if uri.scheme == "file":
+                  root = Path(unquote(uri.path))
+              else:
+                  root = (
+                      Path(".dart_tool") / package["rootUri"]
+                  ).resolve()
+
+              gradle_files = list(
+                  (root / "android").glob("build.gradle*")
+              )
+
+              if package["name"] == "file_picker":
+                  picker_found = bool(gradle_files)
+
+              for file in gradle_files:
+                  if not fix_gradle(file):
+                      raise SystemExit(
+                          "Could not set compileSdk 36 in " + str(file)
+                      )
+
+          if not picker_found:
+              raise SystemExit("file_picker Gradle file was not found")
+
+          print("Compile SDK configuration completed.")
           PY
 
-      - name: Verify Compile SDK
-        run: |
-          grep -nE 'compileSdk(Version)?' android/app/build.gradle*
-
-      - name: Get packages
-        run: flutter pub get
-
-      - name: Build APK
+      - name: Build Mawas APK
         run: flutter build apk --release
 
       - name: Upload APK
